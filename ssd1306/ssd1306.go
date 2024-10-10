@@ -143,9 +143,9 @@ func NewSPI(p spi.Port, dc gpio.PinOut, opts *Opts) (*Dev, error) {
 
 // NewI2C returns a Dev object that communicates over I²C to a SSD1306 display
 // controller.
-func NewI2C(i i2c.Bus, opts *Opts) (*Dev, error) {
+func NewI2C(i i2c.Bus, addr uint16, opts *Opts) (*Dev, error) {
 	// Maximum clock speed is 1/2.5µs = 400KHz.
-	return newDev(&i2c.Dev{Bus: i, Addr: 0x3C}, opts, false, nil)
+	return newDev(&i2c.Dev{Bus: i, Addr: addr}, opts, false, nil)
 }
 
 // Dev is an open handle to the display controller.

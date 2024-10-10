@@ -29,6 +29,8 @@ import (
 	"periph.io/x/devices/v3/ssd1306/image1bit"
 )
 
+var addr uint16
+
 // SmokeTest is imported by periph-smoketest.
 type SmokeTest struct {
 	delay   time.Duration
@@ -155,7 +157,7 @@ func (s *SmokeTest) Run(f *flag.FlagSet, args []string) (err error) {
 func (s *SmokeTest) run(i2cBus i2c.Bus, spiPort spi.PortCloser, dc gpio.PinOut, opts *ssd1306.Opts) (err error) {
 	s.timings = make([]time.Duration, 2)
 	start := time.Now()
-	i2cDev, err2 := ssd1306.NewI2C(i2cBus, opts)
+	i2cDev, err2 := ssd1306.NewI2C(i2cBus, addr, opts)
 	s.timings[0] = time.Since(start)
 	if err2 != nil {
 		return err2

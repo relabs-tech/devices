@@ -21,15 +21,17 @@ import (
 	"periph.io/x/devices/v3/ssd1306/image1bit"
 )
 
+var addr uint16
+
 func TestNewI2C_fail(t *testing.T) {
 	bus := i2ctest.Playback{DontPanic: true}
-	if d, err := NewI2C(&bus, &Opts{H: 64}); d != nil || err == nil {
+	if d, err := NewI2C(&bus, addr, &Opts{H: 64}); d != nil || err == nil {
 		t.Fatal(d, err)
 	}
-	if d, err := NewI2C(&bus, &Opts{W: 64}); d != nil || err == nil {
+	if d, err := NewI2C(&bus, addr, &Opts{W: 64}); d != nil || err == nil {
 		t.Fatal(d, err)
 	}
-	if d, err := NewI2C(&bus, &Opts{W: 64, H: 64, Rotated: true}); d != nil || err == nil {
+	if d, err := NewI2C(&bus, addr, &Opts{W: 64, H: 64, Rotated: true}); d != nil || err == nil {
 		t.Fatal(d, err)
 	}
 	if err := bus.Close(); err != nil {
@@ -39,7 +41,7 @@ func TestNewI2C_fail(t *testing.T) {
 
 func TestI2C_ColorModel(t *testing.T) {
 	bus := getI2CPlayback()
-	dev, err := NewI2C(bus, &DefaultOpts)
+	dev, err := NewI2C(bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +55,7 @@ func TestI2C_ColorModel(t *testing.T) {
 
 func TestI2C_String(t *testing.T) {
 	bus := getI2CPlayback()
-	dev, err := NewI2C(bus, &DefaultOpts)
+	dev, err := NewI2C(bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +108,7 @@ func TestI2C_Draw_VerticalLSD_fast(t *testing.T) {
 			{Addr: 0x3c, W: emptyBuf},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +163,7 @@ func TestI2C_Halt_Write(t *testing.T) {
 			{Addr: 0x3c, W: emptyBuf},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +190,7 @@ func TestI2C_Halt_resume_fail(t *testing.T) {
 		},
 		DontPanic: true,
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +212,7 @@ func TestI2C_Write_invalid_size(t *testing.T) {
 			{Addr: 0x3c, W: initCmdI2C()},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +232,7 @@ func TestI2C_Write_fail(t *testing.T) {
 		},
 		DontPanic: true,
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +252,7 @@ func TestI2C_Draw_fail(t *testing.T) {
 		},
 		DontPanic: true,
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +297,7 @@ func TestI2C_DrawGray(t *testing.T) {
 			{Addr: 0x3c, W: buf},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +325,7 @@ func TestI2C_Scroll(t *testing.T) {
 			{Addr: 0x3c, W: []byte{0x0, 0x2e}},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +361,7 @@ func TestI2C_SetContrast(t *testing.T) {
 			{Addr: 0x3c, W: []byte{0x0, 0x81, 0xff}},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +389,7 @@ func TestI2C_SetDisplayStartLine(t *testing.T) {
 			{Addr: 0x3c, W: []byte{0x0, 0x7F}},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +422,7 @@ func TestI2C_Invert_Halt_resume(t *testing.T) {
 			{Addr: 0x3c, W: []byte{0x0, 0xaf, 0xa6}},
 		},
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +451,7 @@ func TestI2C_Halt(t *testing.T) {
 		},
 		DontPanic: true,
 	}
-	dev, err := NewI2C(&bus, &DefaultOpts)
+	dev, err := NewI2C(&bus, addr, &DefaultOpts)
 	if err != nil {
 		t.Fatal(err)
 	}

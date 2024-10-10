@@ -14,6 +14,8 @@ import (
 	"periph.io/x/host/v3"
 )
 
+var addr uint16
+
 func Example() {
 	// Make sure periph is initialized.
 	if _, err := host.Init(); err != nil {
@@ -27,7 +29,7 @@ func Example() {
 	}
 	defer b.Close()
 
-	dev, err := ssd1306.NewI2C(b, &ssd1306.DefaultOpts)
+	dev, err := ssd1306.NewI2C(b, addr, &ssd1306.DefaultOpts)
 	if err != nil {
 		log.Fatalf("failed to initialize ssd1306: %v", err)
 	}
