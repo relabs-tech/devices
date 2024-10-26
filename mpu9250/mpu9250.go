@@ -266,7 +266,7 @@ func (m *MPU9250) ReadMagID() (id byte, err error) {
 	}
 	// Enables Slave and sets data transfer to 1 byte
 	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_CTRL, 0x81); k != nil {
-		wrapf("error writing to register SLV0_REG")
+		wrapf("error writing to register SLV0_CTRL")
 	}
 	time.Sleep(100000)
 
@@ -276,6 +276,166 @@ func (m *MPU9250) ReadMagID() (id byte, err error) {
 //
 //
 ///End Mag test code
+
+//Start MAG methods
+/*
+bool MPU9250::checkNewMagData()
+{
+  bool test;
+//  test = (readByte(AK8963_ADDRESS, AK8963_ST1) & 0x01);
+  writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS | 0x80);    // Set the I2C slave address of AK8963 and set for read.
+  writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_ST1);                // I2C slave 0 register address from where to begin data transfer
+  writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x81);                     // Enable I2C and transfer 1 byte
+  delay(2);
+  test = (readByte(MPU9250_ADDRESS, EXT_SENS_DATA_00) & 0x01);         // Check data ready status byte
+  return test;
+}
+
+void MPU9250::readMagData(int16_t * destination)
+{
+  uint8_t rawData[7];  // x/y/z gyro register data, ST2 register stored here, must read ST2 at end of data acquisition
+//  readBytes(AK8963_ADDRESS, AK8963_XOUT_L, 7, &rawData[0]);  // Read the six raw data and ST2 registers sequentially into data array
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS | 0x80);    // Set the I2C slave address of AK8963 and set for read.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_XOUT_L);             // I2C slave 0 register address from where to begin data transfer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x87);                     // Enable I2C and read 7 bytes
+   delay(2);
+   readBytes(MPU9250_ADDRESS, EXT_SENS_DATA_00, 7, &rawData[0]);        // Read the x-, y-, and z-axis calibration values
+   uint8_t c = rawData[6]; // End data read by reading ST2 register
+   if(!(c & 0x08)) { // Check if magnetic sensor overflow set, if not then report data
+   destination[0] = ((int16_t)rawData[1] << 8) | rawData[0] ;  // Turn the MSB and LSB into a signed 16-bit value
+   destination[1] = ((int16_t)rawData[3] << 8) | rawData[2] ;  // Data stored as little Endian
+   destination[2] = ((int16_t)rawData[5] << 8) | rawData[4] ;
+   }
+}
+
+void MPU9250::initAK8963(uint8_t Mscale, uint8_t Mmode, float * magCalibration)
+{
+  // First extract the factory calibration for each magnetometer axis
+  uint8_t rawData[3];  // x/y/z gyro calibration data stored here
+  writeByte(AK8963_ADDRESS, AK8963_CNTL, 0x00); // Power down magnetometer
+  delay(10);
+  writeByte(AK8963_ADDRESS, AK8963_CNTL, 0x0F); // Enter Fuse ROM access mode
+  delay(10);
+  readBytes(AK8963_ADDRESS, AK8963_ASAX, 3, &rawData[0]);  // Read the x-, y-, and z-axis calibration values
+  magCalibration[0] =  (float)(rawData[0] - 128)/256.0f + 1.0f;   // Return x-axis sensitivity adjustment values, etc.
+  magCalibration[1] =  (float)(rawData[1] - 128)/256.0f + 1.0f;
+  magCalibration[2] =  (float)(rawData[2] - 128)/256.0f + 1.0f;
+  _magCalibration[0] = magCalibration[0];
+  _magCalibration[1] = magCalibration[1];
+  _magCalibration[2] = magCalibration[2];
+  _Mmode = Mmode;
+  writeByte(AK8963_ADDRESS, AK8963_CNTL, 0x00); // Power down magnetometer
+  delay(10);
+  // Configure the magnetometer for continuous read and highest resolution
+  // set Mscale bit 4 to 1 (0) to enable 16 (14) bit resolution in CNTL register,
+  // and enable continuous mode data acquisition Mmode (bits [3:0]), 0010 for 8 Hz and 0110 for 100 Hz sample rates
+  writeByte(AK8963_ADDRESS, AK8963_CNTL, Mscale << 4 | Mmode); // Set magnetometer data resolution and sample ODR
+  delay(10);
+}
+
+void MPU9250::initAK8963Slave(uint8_t Mscale, uint8_t Mmode, float * magCalibration)
+{
+   // First extract the factory calibration for each magnetometer axis
+   uint8_t rawData[3];  // x/y/z gyro calibration data stored here
+
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS);           // Set the I2C slave address of AK8963 and set for write.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_CNTL2);              // I2C slave 0 register address from where to begin data transfer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_DO, 0x01);                       // Reset AK8963
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x81);                     // Enable I2C and write 1 byte
+   delay(50);
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS);           // Set the I2C slave address of AK8963 and set for write.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_CNTL);               // I2C slave 0 register address from where to begin data transfer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_DO, 0x00);                       // Power down magnetometer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x81);                     // Enable I2C and write 1 byte
+   delay(50);
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS);           // Set the I2C slave address of AK8963 and set for write.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_CNTL);               // I2C slave 0 register address from where to begin data transfer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_DO, 0x0F);                       // Enter fuze mode
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x81);                     // Enable I2C and write 1 byte
+   delay(50);
+
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS | 0x80);    // Set the I2C slave address of AK8963 and set for read.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_ASAX);               // I2C slave 0 register address from where to begin data transfer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x83);                     // Enable I2C and read 3 bytes
+   delay(50);
+   readBytes(MPU9250_ADDRESS, EXT_SENS_DATA_00, 3, &rawData[0]);        // Read the x-, y-, and z-axis calibration values
+   magCalibration[0] =  (float)(rawData[0] - 128)/256.0f + 1.0f;        // Return x-axis sensitivity adjustment values, etc.
+   magCalibration[1] =  (float)(rawData[1] - 128)/256.0f + 1.0f;
+   magCalibration[2] =  (float)(rawData[2] - 128)/256.0f + 1.0f;
+   _magCalibration[0] = magCalibration[0];
+   _magCalibration[1] = magCalibration[1];
+   _magCalibration[2] = magCalibration[2];
+   _Mmode = Mmode;
+
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS);           // Set the I2C slave address of AK8963 and set for write.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_CNTL);               // I2C slave 0 register address from where to begin data transfer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_DO, 0x00);                       // Power down magnetometer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x81);                     // Enable I2C and transfer 1 byte
+   delay(50);
+
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS);           // Set the I2C slave address of AK8963 and set for write.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_CNTL);               // I2C slave 0 register address from where to begin data transfer
+   // Configure the magnetometer for continuous read and highest resolution
+   // set Mscale bit 4 to 1 (0) to enable 16 (14) bit resolution in CNTL register,
+   // and enable continuous mode data acquisition Mmode (bits [3:0]), 0010 for 8 Hz and 0110 for 100 Hz sample rates
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_DO, Mscale << 4 | Mmode);        // Set magnetometer data resolution and sample ODR
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x81);                     // Enable I2C and transfer 1 byte
+   delay(50);
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_ADDR, AK8963_ADDRESS | 0x80);    // Set the I2C slave address of AK8963 and set for read.
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_REG, AK8963_CNTL);               // I2C slave 0 register address from where to begin data transfer
+   writeByte(MPU9250_ADDRESS, I2C_SLV0_CTRL, 0x81);                     // Enable I2C and transfer 1 byte
+   delay(50);
+}
+void MPU9250::magcalMPU9250(float * dest1, float * dest2)
+{
+  uint16_t ii = 0, sample_count = 0;
+  int32_t mag_bias[3] = {0, 0, 0}, mag_scale[3] = {0, 0, 0};
+  int16_t mag_max[3] = {-32767, -32767, -32767}, mag_min[3] = {32767, 32767, 32767}, mag_temp[3] = {0, 0, 0};
+
+  Serial.println("Mag Calibration: Wave device in a figure eight until done!");
+  delay(4000);
+
+// shoot for ~fifteen seconds of mag data
+    if(_Mmode == 0x02) sample_count = 128;  // at 8 Hz ODR, new mag data is available every 125 ms
+    if(_Mmode == 0x06) sample_count = 1500;  // at 100 Hz ODR, new mag data is available every 10 ms
+    for(ii = 0; ii < sample_count; ii++) {
+    readMagData(mag_temp);  // Read the mag data
+    for (int jj = 0; jj < 3; jj++) {
+      if(mag_temp[jj] > mag_max[jj]) mag_max[jj] = mag_temp[jj];
+      if(mag_temp[jj] < mag_min[jj]) mag_min[jj] = mag_temp[jj];
+    }
+    if(_Mmode == 0x02) delay(135);  // at 8 Hz ODR, new mag data is available every 125 ms
+    if(_Mmode == 0x06) delay(12);  // at 100 Hz ODR, new mag data is available every 10 ms
+    }
+
+//    Serial.println("mag x min/max:"); Serial.println(mag_max[0]); Serial.println(mag_min[0]);
+//    Serial.println("mag y min/max:"); Serial.println(mag_max[1]); Serial.println(mag_min[1]);
+//    Serial.println("mag z min/max:"); Serial.println(mag_max[2]); Serial.println(mag_min[2]);
+
+    // Get hard iron correction
+    mag_bias[0]  = (mag_max[0] + mag_min[0])/2;  // get average x mag bias in counts
+    mag_bias[1]  = (mag_max[1] + mag_min[1])/2;  // get average y mag bias in counts
+    mag_bias[2]  = (mag_max[2] + mag_min[2])/2;  // get average z mag bias in counts
+
+    dest1[0] = (float) mag_bias[0]*_mRes*_magCalibration[0];  // save mag biases in G for main program
+    dest1[1] = (float) mag_bias[1]*_mRes*_magCalibration[1];
+    dest1[2] = (float) mag_bias[2]*_mRes*_magCalibration[2];
+
+    // Get soft iron correction estimate
+    mag_scale[0]  = (mag_max[0] - mag_min[0])/2;  // get average x axis max chord length in counts
+    mag_scale[1]  = (mag_max[1] - mag_min[1])/2;  // get average y axis max chord length in counts
+    mag_scale[2]  = (mag_max[2] - mag_min[2])/2;  // get average z axis max chord length in counts
+
+    float avg_rad = mag_scale[0] + mag_scale[1] + mag_scale[2];
+    avg_rad /= 3.0;
+
+    dest2[0] = avg_rad/((float)mag_scale[0]);
+    dest2[1] = avg_rad/((float)mag_scale[1]);
+    dest2[2] = avg_rad/((float)mag_scale[2]);
+
+   Serial.println("Mag Calibration done!");
+}
+*/
 
 // SelfTest runs the self test on the device.
 //
