@@ -24,6 +24,8 @@ const (
 	accelsenSitivity = 16384
 )
 
+const WHO_AM_I_AK8963 = 0x00
+
 // Proto defines the low-level methods used by different transports.
 type Proto interface {
 	writeMaskedReg(address byte, mask byte, value byte) error
@@ -241,6 +243,32 @@ var selftTestSequence = [][]byte{
 	{reg.MPU9250_ACCEL_CONFIG2, 0x02},
 	{reg.MPU9250_ACCEL_CONFIG, 0x00},
 }
+
+// Mag test code
+func (m *MPU9250) ReadMagID() (id byte, err error) {
+	if k := m.transport.writeByte(reg.MPU9250_USER_CTRL, 0x20); k != nil {
+		wrapf("error writing to register USER_CTRL")
+	}
+	if k := m.transport.writeByte(reg.MPU9250_I2C_MST_CTRL, 0x0D); k != nil {
+		wrapf("error writing to register MST_CTRL")
+	}
+	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_ADDR, reg.MPU9250_MAG_ADDRESS|0x80); k != nil {
+		wrapf("error writing to register SLV0_ADDR")
+	}
+	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_REG, WHO_AM_I_AK8963); k != nil {
+		wrapf("error writing to register SLV0_REG")
+	}
+	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_CTRL, 0x81); k != nil {
+		wrapf("error writing to register SLV0_REG")
+	}
+	time.Sleep(100000)
+
+	return m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_00)
+}
+
+//
+//
+///End Mag test code
 
 // SelfTest runs the self test on the device.
 //
