@@ -246,18 +246,25 @@ var selftTestSequence = [][]byte{
 
 // Mag test code
 func (m *MPU9250) ReadMagID() (id byte, err error) {
+	//Bit 5 -- 1 - (0x20)Enable the I2C Master I/F module; pins ES_DA and ES_SCL are isolated from pins SDA/SDI and SCL/ SCLK.
+	//Bit 5 -- 0 – (0x00)Disable I2C Master I/F module; pins ES_DA and ES_SCL are logically driven by pins SDA/SDI and SCL/ SCLK.
+	//NOTE: DMP will run when enabled, even if all internal sensors are disabled,except when the sample rate is set to 8Khz.
 	if k := m.transport.writeByte(reg.MPU9250_USER_CTRL, 0x20); k != nil {
 		wrapf("error writing to register USER_CTRL")
 	}
+	// Sets the clk speed to 381KHz
 	if k := m.transport.writeByte(reg.MPU9250_I2C_MST_CTRL, 0x0D); k != nil {
 		wrapf("error writing to register MST_CTRL")
 	}
+	//Sets the address of the SLV0 to match the AK8963-0x0C and sets for Read (last bit = 1)
 	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_ADDR, reg.MPU9250_MAG_ADDRESS|0x80); k != nil {
 		wrapf("error writing to register SLV0_ADDR")
 	}
+	//Sets base address for data transfer from SLV0==AK8963 base address
 	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_REG, WHO_AM_I_AK8963); k != nil {
 		wrapf("error writing to register SLV0_REG")
 	}
+	// Enables Slave and sets data transfer to 1 byte
 	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_CTRL, 0x81); k != nil {
 		wrapf("error writing to register SLV0_REG")
 	}
