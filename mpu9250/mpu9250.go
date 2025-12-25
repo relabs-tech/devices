@@ -51,6 +51,19 @@ type RotationData struct {
 	X, Y, Z int16
 }
 
+// MagCal holds factory sensitivity adjustment (ASA) values.
+type MagCal struct {
+	AdjX float64
+	AdjY float64
+	AdjZ float64
+}
+
+// MagData is one magnetometer sample.
+type MagData struct {
+	X, Y, Z  int16
+	Overflow bool
+}
+
 // Deviation defines the standard deviation for major axises.
 type Deviation struct {
 	X, Y, Z float64
@@ -244,33 +257,58 @@ var selftTestSequence = [][]byte{
 	{reg.MPU9250_ACCEL_CONFIG, 0x00},
 }
 
-// Mag test code
-func (m *MPU9250) ReadMagID() (id byte, err error) {
-	//Bit 5 -- 1 - (0x20)Enable the I2C Master I/F module; pins ES_DA and ES_SCL are isolated from pins SDA/SDI and SCL/ SCLK.
-	//Bit 5 -- 0 – (0x00)Disable I2C Master I/F module; pins ES_DA and ES_SCL are logically driven by pins SDA/SDI and SCL/ SCLK.
-	//NOTE: DMP will run when enabled, even if all internal sensors are disabled,except when the sample rate is set to 8Khz.
-	if k := m.transport.writeByte(reg.MPU9250_USER_CTRL, 0x20); k != nil {
-		wrapf("error writing to register USER_CTRL")
+func (m *MPU9250) ReadMagID() (byte, error) {
+	// Enable I2C master, disable primary I2C
+	if err := m.transport.writeMaskedReg(
+		reg.MPU9250_USER_CTRL,
+		reg.MPU9250_I2C_IF_DIS_MASK|reg.MPU9250_I2C_MST_EN_MASK,
+		reg.MPU9250_I2C_IF_DIS_MASK|reg.MPU9250_I2C_MST_EN_MASK,
+	); err != nil {
+		return 0, fmt.Errorf("enable I2C master: %w", err)
 	}
-	// Sets the clk speed to 381KHz
-	if k := m.transport.writeByte(reg.MPU9250_I2C_MST_CTRL, 0x0D); k != nil {
-		wrapf("error writing to register MST_CTRL")
-	}
-	//Sets the address of the SLV0 to match the AK8963-0x0C and sets for Read (last bit = 1)
-	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_ADDR, reg.MPU9250_MAG_ADDRESS|0x80); k != nil {
-		wrapf("error writing to register SLV0_ADDR")
-	}
-	//Sets base address for data transfer from SLV0==AK8963 base address
-	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_REG, WHO_AM_I_AK8963); k != nil {
-		wrapf("error writing to register SLV0_REG")
-	}
-	// Enables Slave and sets data transfer to 1 byte
-	if k := m.transport.writeByte(reg.MPU9250_I2C_SLV0_CTRL, 0x81); k != nil {
-		wrapf("error writing to register SLV0_CTRL")
-	}
-	time.Sleep(100000)
 
-	return m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_00)
+	// Set I2C master clock (~400 kHz)
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_MST_CTRL,
+		0x0D,
+	); err != nil {
+		return 0, fmt.Errorf("set I2C master clock: %w", err)
+	}
+
+	// Configure SLV0 for READ from AK8963
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_ADDR,
+		reg.MPU9250_I2C_SLV0_RNW_MASK|(reg.MPU9250_MAG_ADDRESS&reg.MPU9250_I2C_ID_0_MASK),
+	); err != nil {
+		return 0, fmt.Errorf("set SLV0 addr: %w", err)
+	}
+
+	// AK8963 WHO_AM_I register
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_REG,
+		reg.MPU9250_MAG_WIA,
+	); err != nil {
+		return 0, fmt.Errorf("set SLV0 reg: %w", err)
+	}
+
+	// Enable SLV0, length = 1 byte
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_CTRL,
+		reg.MPU9250_I2C_SLV0_EN_MASK|1,
+	); err != nil {
+		return 0, fmt.Errorf("enable SLV0: %w", err)
+	}
+
+	// Allow internal I2C master to complete transaction
+	time.Sleep(2 * time.Millisecond)
+
+	// Read result from EXT_SENS_DATA_00
+	id, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_00)
+	if err != nil {
+		return 0, fmt.Errorf("read mag WHO_AM_I: %w", err)
+	}
+
+	return id, nil
 }
 
 //
@@ -308,8 +346,39 @@ void MPU9250::readMagData(int16_t * destination)
    }
 }
 
+*/
+func (m *MPU9250) ReadMag(cal *MagCal) (MagData, error) {
+	var raw [7]byte
+	for i := 0; i < 7; i++ {
+		b, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_00 + byte(i))
+		if err != nil {
+			return MagData{}, err
+		}
+		raw[i] = b
+	}
 
+	// ST2 overflow check
+	if raw[6]&0x08 != 0 {
+		return MagData{Overflow: true}, nil
+	}
 
+	x := int16(raw[1])<<8 | int16(raw[0])
+	y := int16(raw[3])<<8 | int16(raw[2])
+	z := int16(raw[5])<<8 | int16(raw[4])
+
+	// Apply factory sensitivity adjustment
+	x = int16(float64(x) * cal.AdjX)
+	y = int16(float64(y) * cal.AdjY)
+	z = int16(float64(z) * cal.AdjZ)
+
+	return MagData{
+		X: x,
+		Y: y,
+		Z: z,
+	}, nil
+}
+
+/*
 void MPU9250::initAK8963Slave(uint8_t Mscale, uint8_t Mmode, float * magCalibration)
 {
    // First extract the factory calibration for each magnetometer axis
@@ -413,6 +482,109 @@ void MPU9250::magcalMPU9250(float * dest1, float * dest2)
    Serial.println("Mag Calibration done!");
 }
 */
+
+// that was C++ ... Now in golang...
+func (m *MPU9250) InitMag() (*MagCal, error) {
+	// Enable I2C master, disable primary I2C
+	if err := m.transport.writeMaskedReg(
+		reg.MPU9250_USER_CTRL,
+		reg.MPU9250_I2C_IF_DIS_MASK|reg.MPU9250_I2C_MST_EN_MASK,
+		reg.MPU9250_I2C_IF_DIS_MASK|reg.MPU9250_I2C_MST_EN_MASK,
+	); err != nil {
+		return nil, err
+	}
+
+	// Set I2C master clock (~400kHz)
+	if err := m.transport.writeByte(reg.MPU9250_I2C_MST_CTRL, 0x0D); err != nil {
+		return nil, err
+	}
+
+	// Power down magnetometer
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00); err != nil {
+		return nil, err
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Enter fuse ROM access mode
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x0F); err != nil {
+		return nil, err
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Read ASA values
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_ADDR,
+		reg.MPU9250_MAG_ADDRESS|0x80,
+	); err != nil {
+		return nil, err
+	}
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_REG,
+		reg.MPU9250_MAG_ASAX,
+	); err != nil {
+		return nil, err
+	}
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_CTRL,
+		0x83,
+	); err != nil {
+		return nil, err
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	asaX, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_00)
+	if err != nil {
+		return nil, err
+	}
+	asaY, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_01)
+	if err != nil {
+		return nil, err
+	}
+	asaZ, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_02)
+	if err != nil {
+		return nil, err
+	}
+
+	cal := &MagCal{
+		AdjX: (float64(asaX)-128.0)/256.0 + 1.0,
+		AdjY: (float64(asaY)-128.0)/256.0 + 1.0,
+		AdjZ: (float64(asaZ)-128.0)/256.0 + 1.0,
+	}
+
+	// Power down again
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00); err != nil {
+		return nil, err
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Continuous measurement mode 2 (100Hz, 16-bit)
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x16); err != nil {
+		return nil, err
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Configure continuous read into EXT_SENS_DATA
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_ADDR,
+		reg.MPU9250_MAG_ADDRESS|0x80,
+	); err != nil {
+		return nil, err
+	}
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_REG,
+		reg.MPU9250_MAG_XOUT_L,
+	); err != nil {
+		return nil, err
+	}
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_CTRL,
+		0x87, // enable, 7 bytes
+	); err != nil {
+		return nil, err
+	}
+
+	return cal, nil
+}
 
 // SelfTest runs the self test on the device.
 //
@@ -1937,6 +2109,47 @@ func (m *MPU9250) ReadWord(hi, lo byte) (uint16, error) {
 	return uint16(hiByte)<<8 | uint16(loByte), nil
 }
 
+// Helper to write to the magnetometer internal I2C over SPI
+func (m *MPU9250) writeMagReg(address byte, value byte) error {
+	// Configure SLV0 for WRITE to AK8963
+	// bit7 = 0 → write
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_ADDR,
+		reg.MPU9250_MAG_ADDRESS&reg.MPU9250_I2C_ID_0_MASK,
+	); err != nil {
+		return err
+	}
+
+	// Register address on AK8963
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_REG,
+		address,
+	); err != nil {
+		return err
+	}
+
+	// Data to write
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_DO,
+		value,
+	); err != nil {
+		return err
+	}
+
+	// Enable SLV0, length = 1 byte
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_CTRL,
+		reg.MPU9250_I2C_SLV0_EN_MASK|1,
+	); err != nil {
+		return err
+	}
+
+	// Allow internal I2C master to complete transaction
+	time.Sleep(2 * time.Millisecond)
+
+	return nil
+}
+
 // ReadSignedWord reads signed word from the provided high/low registers
 // addresses.
 func (m *MPU9250) ReadSignedWord(hi, lo byte) (int16, error) {
@@ -2044,3 +2257,31 @@ var (
 		{reg.MPU9250_FIFO_EN, 0x00},   // Disable gyro and accelerometer sensors for FIFO
 	}
 )
+
+// SetDLPFMode sets the Digital Low Pass Filter configuration.
+// mode: 0-6 sets DLPF with 1kHz sample rate, 7 disables DLPF (3600Hz gyro, 4kHz accel)
+func (m *MPU9250) SetDLPFMode(mode byte) error {
+return m.transport.writeByte(reg.MPU9250_CONFIG, mode&0x07)
+}
+
+// SetSampleRateDivider sets the sample rate divider.
+// Sample Rate = Gyroscope Output Rate / (1 + divider)
+// For DLPF enabled (CONFIG 0-6): Gyro Output Rate = 1kHz
+// For DLPF disabled (CONFIG 7): Gyro Output Rate = 8kHz
+func (m *MPU9250) SetSampleRateDivider(divider byte) error {
+return m.transport.writeByte(reg.MPU9250_SMPLRT_DIV, divider)
+}
+
+// SetAccelDLPF sets the accelerometer Digital Low Pass Filter.
+// fchoice_b must be 0 (bits 3:2 of ACCEL_CONFIG2)
+// a_dlpf_cfg: 0-7 sets the accelerometer bandwidth
+func (m *MPU9250) SetAccelDLPF(config byte) error {
+// Read current ACCEL_CONFIG2
+current, err := m.transport.readByte(reg.MPU9250_ACCEL_CONFIG2)
+if err != nil {
+return err
+}
+// Clear fchoice_b (bit 3) and a_dlpf_cfg (bits 2:0), then set new config
+newVal := (current & 0xF0) | (config & 0x07)
+return m.transport.writeByte(reg.MPU9250_ACCEL_CONFIG2, newVal)
+}
