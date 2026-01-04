@@ -93,6 +93,18 @@ func (m *MPU9250) Debug(f DebugF) {
 	m.debug = f
 }
 
+// ReadRegister returns the raw byte from the given register address.
+// This is primarily used by the register debug tool for low-level access.
+func (m *MPU9250) ReadRegister(address byte) (byte, error) {
+	return m.transport.readByte(address)
+}
+
+// WriteRegister writes a raw byte into the given register address.
+// This bypasses higher level helpers and is used for interactive register debugging.
+func (m *MPU9250) WriteRegister(address byte, value byte) error {
+	return m.transport.writeByte(address, value)
+}
+
 // Init initializes the device.
 func (m *MPU9250) Init() error {
 	return m.transferBatch(initSequence, "error initializing %d: [%x:%x] => %v")
@@ -2261,7 +2273,7 @@ var (
 // SetDLPFMode sets the Digital Low Pass Filter configuration.
 // mode: 0-6 sets DLPF with 1kHz sample rate, 7 disables DLPF (3600Hz gyro, 4kHz accel)
 func (m *MPU9250) SetDLPFMode(mode byte) error {
-return m.transport.writeByte(reg.MPU9250_CONFIG, mode&0x07)
+	return m.transport.writeByte(reg.MPU9250_CONFIG, mode&0x07)
 }
 
 // SetSampleRateDivider sets the sample rate divider.
@@ -2269,19 +2281,19 @@ return m.transport.writeByte(reg.MPU9250_CONFIG, mode&0x07)
 // For DLPF enabled (CONFIG 0-6): Gyro Output Rate = 1kHz
 // For DLPF disabled (CONFIG 7): Gyro Output Rate = 8kHz
 func (m *MPU9250) SetSampleRateDivider(divider byte) error {
-return m.transport.writeByte(reg.MPU9250_SMPLRT_DIV, divider)
+	return m.transport.writeByte(reg.MPU9250_SMPLRT_DIV, divider)
 }
 
 // SetAccelDLPF sets the accelerometer Digital Low Pass Filter.
 // fchoice_b must be 0 (bits 3:2 of ACCEL_CONFIG2)
 // a_dlpf_cfg: 0-7 sets the accelerometer bandwidth
 func (m *MPU9250) SetAccelDLPF(config byte) error {
-// Read current ACCEL_CONFIG2
-current, err := m.transport.readByte(reg.MPU9250_ACCEL_CONFIG2)
-if err != nil {
-return err
-}
-// Clear fchoice_b (bit 3) and a_dlpf_cfg (bits 2:0), then set new config
-newVal := (current & 0xF0) | (config & 0x07)
-return m.transport.writeByte(reg.MPU9250_ACCEL_CONFIG2, newVal)
+	// Read current ACCEL_CONFIG2
+	current, err := m.transport.readByte(reg.MPU9250_ACCEL_CONFIG2)
+	if err != nil {
+		return err
+	}
+	// Clear fchoice_b (bit 3) and a_dlpf_cfg (bits 2:0), then set new config
+	newVal := (current & 0xF0) | (config & 0x07)
+	return m.transport.writeByte(reg.MPU9250_ACCEL_CONFIG2, newVal)
 }
