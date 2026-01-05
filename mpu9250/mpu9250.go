@@ -598,6 +598,120 @@ func (m *MPU9250) InitMag() (*MagCal, error) {
 	return cal, nil
 }
 
+// ReadMagRegister reads a single register from the AK8963 magnetometer via internal I2C master.
+// This method accesses the magnetometer through the MPU9250's I2C master interface.
+func (m *MPU9250) ReadMagRegister(regAddr byte) (byte, error) {
+	// Set slave address with read bit
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_ADDR,
+		reg.MPU9250_MAG_ADDRESS|0x80,
+	); err != nil {
+		return 0, err
+	}
+
+	// Set register address to read from
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_REG,
+		regAddr,
+	); err != nil {
+		return 0, err
+	}
+
+	// Enable slave 0, read 1 byte
+	if err := m.transport.writeByte(
+		reg.MPU9250_I2C_SLV0_CTRL,
+		0x81,
+	); err != nil {
+		return 0, err
+	}
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Read result from EXT_SENS_DATA_00
+	return m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_00)
+}
+
+// WriteMagRegister writes a single register to the AK8963 magnetometer via internal I2C master.
+// This is the public wrapper for writeMagReg.
+func (m *MPU9250) WriteMagRegister(regAddr byte, value byte) error {
+	return m.writeMagReg(regAddr, value)
+}
+
+// ReadAllMagRegisters reads all accessible AK8963 magnetometer registers.
+// Returns a map of register addresses to their values.
+func (m *MPU9250) ReadAllMagRegisters() (map[byte]byte, error) {
+	registers := make(map[byte]byte)
+
+	// AK8963 accessible registers: 0x00-0x0C, 0x10-0x12
+	addresses := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x10, 0x11, 0x12}
+
+	for _, addr := range addresses {
+		value, err := m.ReadMagRegister(addr)
+		if err != nil {
+			return nil, fmt.Errorf("read AK8963 register 0x%02X: %w", addr, err)
+		}
+		registers[addr] = value
+	}
+
+	return registers, nil
+}
+
+// ReadAllRegisters reads all MPU9250 registers (0x00-0x7F).
+// Returns a map of register addresses to their values.
+func (m *MPU9250) ReadAllRegisters() (map[byte]byte, error) {
+	registers := make(map[byte]byte)
+
+	for addr := byte(0x00); addr <= 0x7F; addr++ {
+		value, err := m.ReadRegister(addr)
+		if err != nil {
+			return nil, fmt.Errorf("read register 0x%02X: %w", addr, err)
+		}
+		registers[addr] = value
+	}
+
+	return registers, nil
+}
+
+// ConfigureMag configures the AK8963 magnetometer resolution and output rate.
+// resBits: 14 or 16 (bit resolution)
+// rateHz: 8 or 100 (output data rate in Hz)
+func (m *MPU9250) ConfigureMag(resBits, rateHz int) error {
+	var resMask byte
+	switch resBits {
+	case 14:
+		resMask = 0x00
+	case 16:
+		resMask = 0x10
+	default:
+		return fmt.Errorf("invalid magnetometer resolution %d (expected 14 or 16)", resBits)
+	}
+
+	var modeMask byte
+	switch rateHz {
+	case 8:
+		modeMask = 0x02
+	case 100:
+		modeMask = 0x06
+	default:
+		return fmt.Errorf("invalid magnetometer rate %d Hz (expected 8 or 100)", rateHz)
+	}
+
+	// Power down
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00); err != nil {
+		return fmt.Errorf("magnetometer power-down: %w", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Apply new mode
+	value := resMask | modeMask
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, value); err != nil {
+		return fmt.Errorf("magnetometer set CNTL: %w", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	return nil
+}
+
 // SelfTest runs the self test on the device.
 //
 // Returns the accelerator and gyroscope deviations from the factory defaults.
