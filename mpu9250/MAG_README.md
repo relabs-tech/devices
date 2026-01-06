@@ -66,8 +66,8 @@ delay(50);  // After EVERY magnetometer write operation
 
 Go driver currently uses:
 ```go
-time.Sleep(2 * time.Millisecond)   // writeMagReg() - WRONG
-time.Sleep(10 * time.Millisecond)  // InitMag() x5 - WRONG
+time.Sleep(2 * time.Millisecond)   // writeMagReg() - WRONG (should be 50ms)
+time.Sleep(10 * time.Millisecond)  // InitMag() x5 - WRONG (should be 50ms)
 ```
 
 ---
@@ -80,7 +80,7 @@ time.Sleep(10 * time.Millisecond)  // InitMag() x5 - WRONG
 ┌─────────────────────────────────────────────────────────────────┐
 │                    inertial_config.txt                          │
 │  MAG_WRITE_DELAY_MS=50                                          │
-│  MAG_READ_DELAY_MS=2                                            │
+│  MAG_READ_DELAY_MS=50                                           │
 │  MAG_SCALE=1  (16-bit resolution)                               │
 │  MAG_MODE=0x06  (100Hz continuous)                              │
 │  REGISTER_DEBUG_MAG_WRITE_DELAY=10  (experimental override)     │
@@ -170,8 +170,8 @@ MAG_WRITE_DELAY_MS=50
 
 # Read Delay (milliseconds)  
 # I2C master transaction completion time
-# 2ms is sufficient for read operations
-MAG_READ_DELAY_MS=2
+# Using 50ms for consistency and reliability
+MAG_READ_DELAY_MS=50
 
 # Magnetometer Resolution (0=14-bit, 1=16-bit)
 # 0: 14-bit (0.6 µT/LSB sensitivity)
@@ -380,8 +380,8 @@ Source: AK8963 Datasheet + Arduino Reference Implementation
 | **Mode transition** | 50ms | 10ms | 🔴 HIGH |
 | **Fuse ROM access** | 50ms | 10ms | 🔴 HIGH |
 | **Power state change** | 50ms | 10ms | 🔴 HIGH |
-| **Read single register** | 2ms | 2ms | ✅ OK |
-| **Read multi-byte data** | 2ms | 2ms | ✅ OK |
+| **Read single register** | 50ms | 2ms | 🔴 MEDIUM |
+| **Read multi-byte data** | 50ms | 2ms | 🔴 MEDIUM |
 
 ### 5.2 Arduino Reference Timing
 
@@ -458,9 +458,13 @@ func validateMagConfig(cfg *Config) error {
     }
     
     // Read delay validation
-    if cfg.MagReadDelayMS < 1 || cfg.MagReadDelayMS > 50 {
-        return fmt.Errorf("MAG_READ_DELAY_MS must be 1-50ms, got %d",
+    if cfg.MagReadDelayMS < 1 || cfg.MagReadDelayMS > 200 {
+        return fmt.Errorf("MAG_READ_DELAY_MS must be 1-200ms, got %d",
                           cfg.MagReadDelayMS)
+    }
+    if cfg.MagReadDelayMS < 50 {
+        log.Printf("WARNING: MAG_READ_DELAY_MS=%dms is below recommended 50ms",
+                   cfg.MagReadDelayMS)
     }
     
     // Scale validation (0=14-bit, 1=16-bit)
@@ -747,7 +751,7 @@ Ensure changes don't affect accelerometer/gyroscope:
 | Read ASA | delay(50) | 10ms | 50ms |
 | Power down 2 | delay(50) | 10ms | 50ms |
 | Set mode | delay(50) | 10ms | 50ms |
-| Read operation | delay(2) | 2ms | 2ms ✅ |
+| Read operation | delay(2) | 2ms | 50ms |
 
 ### 9.3 Sequence Comparison
 
@@ -778,7 +782,7 @@ Ensure changes don't affect accelerometer/gyroscope:
 1. Reset AK8963 (CNTL2=0x01) + writeDelay (50ms from config) ✅
 2. Power down (CNTL=0x00) + writeDelay (50ms) ✅
 3. Enter fuse mode (CNTL=0x0F) + writeDelay (50ms) ✅
-4. Read ASA values (3 bytes) + readDelay (2ms) ✅
+4. Read ASA values (3 bytes) + readDelay (50ms) ✅
 5. Power down (CNTL=0x00) + writeDelay (50ms) ✅
 6. Set measurement mode (CNTL=scale|mode) + writeDelay (50ms) ✅
 7. Configure continuous read (SLV0 setup) + writeDelay (50ms) ✅
@@ -801,6 +805,7 @@ mgr.Init()  // Now loads mag params from config automatically
 ```ini
 # inertial_config.txt
 MAG_WRITE_DELAY_MS=50    # Standard (recommended)
+MAG_READ_DELAY_MS=50     # Standard (recommended)
 MAG_MODE=0x06            # 100Hz continuous
 MAG_SCALE=1              # 16-bit resolution
 ```
@@ -820,7 +825,7 @@ magCal, _ := dev.InitMag()  // No parameters
 dev, _ := mpu9250.New(transport)
 magCal, _ := dev.InitMag(
     50 * time.Millisecond,  // writeDelay
-    2 * time.Millisecond,   // readDelay  
+    50 * time.Millisecond,  // readDelay  
     1,                       // scale (16-bit)
     0x06,                    // mode (100Hz)
 )
@@ -877,7 +882,7 @@ Add to all updated functions:
 //               AK8963 datasheet requires minimum 50ms for reliable operation.
 //               Arduino reference uses 50ms consistently.
 //   readDelay:  Delay for I2C master read completion.
-//               2ms is sufficient per datasheet.
+//               50ms recommended for consistency and reliability.
 //   scale:      Resolution. 0=14-bit (0.6µT/LSB), 1=16-bit (0.15µT/LSB).
 //   mode:       Operating mode. 0x02=8Hz continuous, 0x06=100Hz continuous.
 //

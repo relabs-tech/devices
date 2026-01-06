@@ -33,7 +33,7 @@ type Proto interface {
 	readByte(address byte) (byte, error)
 	writeByte(address byte, value byte) error
 	readUint16(address ...byte) (uint16, error)
-	writeMagReg(address byte, value byte) error
+	writeMagReg(address byte, value byte, writeDelay time.Duration) error
 }
 
 // AccelerometerData the values for x/y/z axises.
@@ -496,65 +496,98 @@ void MPU9250::magcalMPU9250(float * dest1, float * dest2)
 */
 
 // that was C++ ... Now in golang...
-func (m *MPU9250) InitMag() (*MagCal, error) {
+
+// InitMag initializes the AK8963 magnetometer via MPU9250's I2C master.
+//
+// Parameters:
+//
+//	writeDelay: Delay after magnetometer write operations.
+//	            AK8963 datasheet requires minimum 50ms for reliable operation.
+//	            Arduino reference uses 50ms consistently.
+//	readDelay:  Delay for I2C master read completion.
+//	            50ms recommended for consistency and reliability.
+//	scale:      Resolution. 0=14-bit (0.6µT/LSB), 1=16-bit (0.15µT/LSB).
+//	mode:       Operating mode. 0x02=8Hz continuous, 0x06=100Hz continuous.
+//
+// Returns factory sensitivity adjustment values (MagCal) for X/Y/Z axes.
+//
+// Sequence (matching Arduino initAK8963Slave):
+//  1. Reset AK8963 via CNTL2 register
+//  2. Power down magnetometer
+//  3. Enter fuse ROM access mode
+//  4. Read ASA (sensitivity adjustment) values
+//  5. Power down again
+//  6. Set measurement mode and resolution
+//  7. Configure I2C master for continuous read
+//
+// Reference: Arduino_Reference/AK8963_as_slave/MPU9250.cpp lines 307-355
+func (m *MPU9250) InitMag(writeDelay, readDelay time.Duration, scale, mode byte) (*MagCal, error) {
+	// Validate parameters
+	if err := validateMagParams(writeDelay, readDelay, scale, mode); err != nil {
+		return nil, fmt.Errorf("invalid mag parameters: %w", err)
+	}
+
 	// Enable I2C master, disable primary I2C
 	if err := m.transport.writeMaskedReg(
 		reg.MPU9250_USER_CTRL,
 		reg.MPU9250_I2C_IF_DIS_MASK|reg.MPU9250_I2C_MST_EN_MASK,
 		reg.MPU9250_I2C_IF_DIS_MASK|reg.MPU9250_I2C_MST_EN_MASK,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("enable I2C master: %w", err)
 	}
 
 	// Set I2C master clock (~400kHz)
 	if err := m.transport.writeByte(reg.MPU9250_I2C_MST_CTRL, 0x0D); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set I2C master clock: %w", err)
 	}
 
-	// Power down magnetometer
-	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00); err != nil {
-		return nil, err
+	// Step 1: Reset AK8963 (missing in original Go implementation)
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL2, 0x01, writeDelay); err != nil {
+		return nil, fmt.Errorf("mag reset: %w", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
-	// Enter fuse ROM access mode
-	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x0F); err != nil {
-		return nil, err
+	// Step 2: Power down magnetometer
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00, writeDelay); err != nil {
+		return nil, fmt.Errorf("mag power down: %w", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
-	// Read ASA values
+	// Step 3: Enter fuse ROM access mode
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x0F, writeDelay); err != nil {
+		return nil, fmt.Errorf("mag fuse mode: %w", err)
+	}
+
+	// Step 4: Read ASA (factory sensitivity adjustment) values
 	if err := m.transport.writeByte(
 		reg.MPU9250_I2C_SLV0_ADDR,
 		reg.MPU9250_MAG_ADDRESS|0x80,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set SLV0 addr for ASA read: %w", err)
 	}
 	if err := m.transport.writeByte(
 		reg.MPU9250_I2C_SLV0_REG,
 		reg.MPU9250_MAG_ASAX,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set SLV0 reg for ASA read: %w", err)
 	}
 	if err := m.transport.writeByte(
 		reg.MPU9250_I2C_SLV0_CTRL,
 		0x83,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("enable SLV0 for ASA read: %w", err)
 	}
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(readDelay)
 
 	asaX, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_00)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read ASA X: %w", err)
 	}
 	asaY, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_01)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read ASA Y: %w", err)
 	}
 	asaZ, err := m.transport.readByte(reg.MPU9250_EXT_SENS_DATA_02)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read ASA Z: %w", err)
 	}
 
 	cal := &MagCal{
@@ -563,39 +596,113 @@ func (m *MPU9250) InitMag() (*MagCal, error) {
 		AdjZ: (float64(asaZ)-128.0)/256.0 + 1.0,
 	}
 
-	// Power down again
-	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00); err != nil {
-		return nil, err
+	// Step 5: Power down again
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00, writeDelay); err != nil {
+		return nil, fmt.Errorf("mag power down 2: %w", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
-	// Continuous measurement mode 2 (100Hz, 16-bit)
-	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x16); err != nil {
-		return nil, err
+	// Step 6: Set measurement mode and resolution
+	// Combine scale (bit 4) and mode (bits 3:0)
+	cntlValue := (scale << 4) | mode
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, cntlValue, writeDelay); err != nil {
+		return nil, fmt.Errorf("mag set mode: %w", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
-	// Configure continuous read into EXT_SENS_DATA
+	// Step 7: Configure continuous read into EXT_SENS_DATA
 	if err := m.transport.writeByte(
 		reg.MPU9250_I2C_SLV0_ADDR,
 		reg.MPU9250_MAG_ADDRESS|0x80,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set SLV0 addr for continuous read: %w", err)
 	}
 	if err := m.transport.writeByte(
 		reg.MPU9250_I2C_SLV0_REG,
 		reg.MPU9250_MAG_XOUT_L,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set SLV0 reg for continuous read: %w", err)
 	}
 	if err := m.transport.writeByte(
 		reg.MPU9250_I2C_SLV0_CTRL,
 		0x87, // enable, 7 bytes
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("enable SLV0 continuous read: %w", err)
 	}
 
 	return cal, nil
+}
+
+// validateMagParams validates magnetometer initialization parameters.
+func validateMagParams(writeDelay, readDelay time.Duration, scale, mode byte) error {
+	if writeDelay < time.Millisecond {
+		return fmt.Errorf("writeDelay too short: %v (min 1ms)", writeDelay)
+	}
+	if readDelay < time.Millisecond {
+		return fmt.Errorf("readDelay too short: %v (min 1ms)", readDelay)
+	}
+	if scale > 1 {
+		return fmt.Errorf("invalid scale: %d (must be 0 or 1)", scale)
+	}
+	// Mode validation per AK8963 datasheet
+	validModes := map[byte]bool{
+		0x00: true, 0x01: true, 0x02: true,
+		0x04: true, 0x06: true, 0x08: true, 0x0F: true,
+	}
+	if !validModes[mode] {
+		return fmt.Errorf("invalid mode: 0x%02X (valid: 0x00,0x01,0x02,0x04,0x06,0x08,0x0F)", mode)
+	}
+	return nil
+}
+
+// ================================================
+// Backward-Compatible Wrapper Functions
+// ================================================
+
+// InitMagWithDefaults initializes the magnetometer with recommended default settings:
+//   - writeDelay: 50ms (per AK8963 datasheet and Arduino reference)
+//   - readDelay:  50ms (for I2C master transaction completion)
+//   - scale:      1 (16-bit resolution, 0.15µT/LSB)
+//   - mode:       0x06 (100Hz continuous measurement)
+//
+// This is the original InitMag() behavior preserved for backward compatibility.
+func (m *MPU9250) InitMagWithDefaults() (*MagCal, error) {
+	return m.InitMag(
+		50*time.Millisecond, // writeDelay (datasheet minimum)
+		50*time.Millisecond, // readDelay
+		1,                   // scale: 16-bit
+		0x06,                // mode: 100Hz continuous
+	)
+}
+
+// ConfigureMagWithDefaults changes magnetometer settings using default 50ms write delay.
+//
+// Parameters:
+//
+//	resBits: 14 or 16 (bit resolution)
+//	rateHz:  8 or 100 (sample rate in Hz)
+//
+// This preserves the original ConfigureMag() API for backward compatibility.
+func (m *MPU9250) ConfigureMagWithDefaults(resBits, rateHz int) error {
+	var scale byte
+	switch resBits {
+	case 14:
+		scale = 0x00
+	case 16:
+		scale = 0x01
+	default:
+		return fmt.Errorf("invalid magnetometer resolution %d (expected 14 or 16)", resBits)
+	}
+
+	var mode byte
+	switch rateHz {
+	case 8:
+		mode = 0x02
+	case 100:
+		mode = 0x06
+	default:
+		return fmt.Errorf("invalid magnetometer rate %d Hz (expected 8 or 100)", rateHz)
+	}
+
+	return m.ConfigureMag(scale, mode, 50*time.Millisecond)
 }
 
 // ReadMagRegister reads a single register from the AK8963 magnetometer via internal I2C master.
@@ -632,9 +739,9 @@ func (m *MPU9250) ReadMagRegister(regAddr byte) (byte, error) {
 }
 
 // WriteMagRegister writes a single register to the AK8963 magnetometer via internal I2C master.
-// This is the public wrapper for writeMagReg.
+// This is the public wrapper for writeMagReg using default 50ms delay.
 func (m *MPU9250) WriteMagRegister(regAddr byte, value byte) error {
-	return m.writeMagReg(regAddr, value)
+	return m.writeMagReg(regAddr, value, 50*time.Millisecond)
 }
 
 // ReadAllMagRegisters reads all accessible AK8963 magnetometer registers.
@@ -675,39 +782,31 @@ func (m *MPU9250) ReadAllRegisters() (map[byte]byte, error) {
 // ConfigureMag configures the AK8963 magnetometer resolution and output rate.
 // resBits: 14 or 16 (bit resolution)
 // rateHz: 8 or 100 (output data rate in Hz)
-func (m *MPU9250) ConfigureMag(resBits, rateHz int) error {
-	var resMask byte
-	switch resBits {
-	case 14:
-		resMask = 0x00
-	case 16:
-		resMask = 0x10
-	default:
-		return fmt.Errorf("invalid magnetometer resolution %d (expected 14 or 16)", resBits)
-	}
-
-	var modeMask byte
-	switch rateHz {
-	case 8:
-		modeMask = 0x02
-	case 100:
-		modeMask = 0x06
-	default:
-		return fmt.Errorf("invalid magnetometer rate %d Hz (expected 8 or 100)", rateHz)
+// ConfigureMag changes the magnetometer resolution and operating mode.
+//
+// Parameters:
+//
+//	scale:      Resolution. 0=14-bit (0.6µT/LSB), 1=16-bit (0.15µT/LSB).
+//	mode:       Operating mode. 0x02=8Hz continuous, 0x06=100Hz continuous.
+//	writeDelay: Delay after write operations (50ms recommended).
+//
+// Note: This function powers down the magnetometer before applying new settings.
+func (m *MPU9250) ConfigureMag(scale, mode byte, writeDelay time.Duration) error {
+	// Validate parameters
+	if err := validateMagParams(writeDelay, writeDelay, scale, mode); err != nil {
+		return fmt.Errorf("invalid mag parameters: %w", err)
 	}
 
 	// Power down
-	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00); err != nil {
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, 0x00, writeDelay); err != nil {
 		return fmt.Errorf("magnetometer power-down: %w", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
-	// Apply new mode
-	value := resMask | modeMask
-	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, value); err != nil {
+	// Apply new mode (scale in bit 4, mode in bits 3:0)
+	value := (scale << 4) | mode
+	if err := m.writeMagReg(reg.MPU9250_MAG_CNTL, value, writeDelay); err != nil {
 		return fmt.Errorf("magnetometer set CNTL: %w", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
 	return nil
 }
@@ -2236,7 +2335,7 @@ func (m *MPU9250) ReadWord(hi, lo byte) (uint16, error) {
 }
 
 // Helper to write to the magnetometer internal I2C over SPI
-func (m *MPU9250) writeMagReg(address byte, value byte) error {
+func (m *MPU9250) writeMagReg(address byte, value byte, writeDelay time.Duration) error {
 	// Configure SLV0 for WRITE to AK8963
 	// bit7 = 0 → write
 	if err := m.transport.writeByte(
@@ -2271,7 +2370,8 @@ func (m *MPU9250) writeMagReg(address byte, value byte) error {
 	}
 
 	// Allow internal I2C master to complete transaction
-	time.Sleep(2 * time.Millisecond)
+	// AK8963 requires 50ms for reliable write operations per datasheet
+	time.Sleep(writeDelay)
 
 	return nil
 }

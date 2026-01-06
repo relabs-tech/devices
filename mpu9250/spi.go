@@ -6,6 +6,7 @@ package mpu9250
 
 import (
 	"fmt"
+	"time"
 
 	"periph.io/x/conn/v3/gpio"
 	"periph.io/x/conn/v3/physic"
@@ -56,7 +57,10 @@ func (s *SpiTransport) writeByte(address byte, value byte) error {
 	return s.cs.Out(gpio.High)
 }
 
-func (s *SpiTransport) writeMagReg(address byte, value byte) error {
+func (s *SpiTransport) writeMagReg(address byte, value byte, writeDelay time.Duration) error {
+	// Note: This is a stub that doesn't actually write to the magnetometer.
+	// The real implementation is in mpu9250.go using I2C master.
+	// This method exists only to satisfy the transport interface.
 	return s.writeByte(address, value)
 }
 

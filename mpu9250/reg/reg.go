@@ -323,7 +323,8 @@ const (
 	MPU9250_MAG_ZOUT_H = 0x08
 	MPU9250_MAG_ST2    = 0x09
 	MPU9250_MAG_CNTL   = 0x0A
-	MPU9250_MAG_RSV    = 0x0B //reserved mystery meat
+	MPU9250_MAG_CNTL2  = 0x0B // Control 2 (reset)
+	MPU9250_MAG_RSV    = 0x0B // reserved mystery meat (duplicate of CNTL2)
 	MPU9250_MAG_ASTC   = 0x0C
 	MPU9250_MAG_TS1    = 0x0D
 	MPU9250_MAG_TS2    = 0x0E
