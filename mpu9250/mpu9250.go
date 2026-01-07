@@ -12,6 +12,7 @@ package mpu9250
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -26,6 +27,9 @@ const (
 
 const WHO_AM_I_AK8963 = 0x00
 
+// Toggle to enable console logging for every register read/write.
+const logIO = false
+
 // Proto defines the low-level methods used by different transports.
 type Proto interface {
 	writeMaskedReg(address byte, mask byte, value byte) error
@@ -34,6 +38,46 @@ type Proto interface {
 	writeByte(address byte, value byte) error
 	readUint16(address ...byte) (uint16, error)
 	writeMagReg(address byte, value byte, writeDelay time.Duration) error
+}
+
+type loggingProto struct {
+	inner Proto
+}
+
+func (p *loggingProto) writeMaskedReg(address byte, mask byte, value byte) error {
+	err := p.inner.writeMaskedReg(address, mask, value)
+	log.Printf("[mpu9250] writeMaskedReg addr=0x%02X mask=0x%02X val=0x%02X err=%v", address, mask, value, err)
+	return err
+}
+
+func (p *loggingProto) readMaskedReg(address byte, mask byte) (byte, error) {
+	value, err := p.inner.readMaskedReg(address, mask)
+	log.Printf("[mpu9250] readMaskedReg addr=0x%02X mask=0x%02X -> 0x%02X err=%v", address, mask, value, err)
+	return value, err
+}
+
+func (p *loggingProto) readByte(address byte) (byte, error) {
+	value, err := p.inner.readByte(address)
+	log.Printf("[mpu9250] readByte addr=0x%02X -> 0x%02X err=%v", address, value, err)
+	return value, err
+}
+
+func (p *loggingProto) writeByte(address byte, value byte) error {
+	err := p.inner.writeByte(address, value)
+	log.Printf("[mpu9250] writeByte addr=0x%02X val=0x%02X err=%v", address, value, err)
+	return err
+}
+
+func (p *loggingProto) readUint16(address ...byte) (uint16, error) {
+	value, err := p.inner.readUint16(address...)
+	log.Printf("[mpu9250] readUint16 addrs=%v -> 0x%04X err=%v", address, value, err)
+	return value, err
+}
+
+func (p *loggingProto) writeMagReg(address byte, value byte, writeDelay time.Duration) error {
+	err := p.inner.writeMagReg(address, value, writeDelay)
+	log.Printf("[mpu9250] writeMagReg addr=0x%02X val=0x%02X delay=%s err=%v", address, value, writeDelay, err)
+	return err
 }
 
 // AccelerometerData the values for x/y/z axises.
@@ -85,6 +129,9 @@ type MPU9250 struct {
 //
 // transport the transport interface.
 func New(transport Proto) (*MPU9250, error) {
+	if logIO {
+		transport = &loggingProto{inner: transport}
+	}
 	return &MPU9250{transport: transport, debug: noop}, nil
 }
 
