@@ -13,14 +13,14 @@ import (
 
 // I2C register map for HMC5983/HMC5883L.
 const (
-	regCRA   = 0x00
-	regCRB   = 0x01
-	regMODE  = 0x02
-	regDATA  = 0x03 // X MSB, X LSB, Z MSB, Z LSB, Y MSB, Y LSB
+	regCRA    = 0x00
+	regCRB    = 0x01
+	regMODE   = 0x02
+	regDATA   = 0x03 // X MSB, X LSB, Z MSB, Z LSB, Y MSB, Y LSB
 	regSTATUS = 0x09
-	regIDA   = 0x0A
-	regIDB   = 0x0B
-	regIDC   = 0x0C
+	regIDA    = 0x0A
+	regIDB    = 0x0B
+	regIDC    = 0x0C
 )
 
 // Default I2C address.
@@ -51,9 +51,9 @@ type Opts struct {
 //
 // NOTE: HMC5983 outputs data in order X,Z,Y.
 type Dev struct {
-	dev          i2c.Dev
-	lsbPerGaXY   int
-	lsbPerGaZ    int
+	dev        i2c.Dev
+	lsbPerGaXY int
+	lsbPerGaZ  int
 }
 
 // New initializes the device.
@@ -72,7 +72,7 @@ func New(bus i2c.Bus, opts Opts) (*Dev, error) {
 	}
 
 	d := &Dev{
-		dev: i2c.Dev{Addr: addr, Bus: bus},
+		dev:        i2c.Dev{Addr: addr, Bus: bus},
 		lsbPerGaXY: gainXY[gc],
 		lsbPerGaZ:  gainZ[gc],
 	}
